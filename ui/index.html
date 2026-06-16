@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Figurinhas P2P</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Courier New', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        h1 { color: #58a6ff; margin-bottom: 20px; font-size: 1.4em; }
+        h2 { color: #8b949e; font-size: 0.9em; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .card.full { grid-column: 1 / -1; }
+        .badge { display: inline-block; background: #21262d; border: 1px solid #30363d; color: #58a6ff; padding: 3px 10px; border-radius: 12px; margin: 3px; font-size: 0.85em; }
+        .badge.peer { color: #3fb950; border-color: #3fb950; }
+        .search-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+        input[type=text] { flex: 1; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 8px 12px; border-radius: 6px; font-family: inherit; font-size: 0.9em; }
+        input[type=text]:focus { outline: none; border-color: #58a6ff; }
+        button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 0.85em; }
+        button:hover { background: #2ea043; }
+        button.trade-btn { background: #1f6feb; padding: 4px 10px; margin-top: 6px; }
+        button.trade-btn:hover { background: #388bfd; }
+        .result { border-left: 3px solid #3fb950; padding: 8px 12px; margin: 6px 0; background: #0d1117; border-radius: 0 4px 4px 0; display: flex; align-items: center; gap: 12px; }
+        .result-info { flex: 1; }
+        .trade-item { border-left: 3px solid #d29922; padding: 8px 12px; margin: 6px 0; background: #0d1117; border-radius: 0 4px 4px 0; font-size: 0.85em; display: flex; align-items: center; gap: 10px; }
+        .trade-item.rejected { border-color: #f85149; }
+        .muted { color: #8b949e; font-size: 0.8em; }
+        code { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+        #status-bar { position: fixed; bottom: 12px; right: 16px; background: #21262d; border: 1px solid #30363d; padding: 4px 12px; border-radius: 20px; font-size: 0.75em; color: #8b949e; }
+        #search-status { font-size: 0.8em; color: #8b949e; margin-top: 4px; min-height: 16px; }
+        .empty { color: #8b949e; font-style: italic; font-size: 0.85em; }
+        /* Figurinha card no inventário */
+        .inv-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+        .fig-card { background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 8px; text-align: center; width: 90px; }
+        .fig-card img { width: 70px; height: 70px; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto 4px; }
+        .fig-card .fig-id { font-size: 0.75em; color: #58a6ff; font-weight: bold; }
+        .fig-card .fig-qty { font-size: 0.8em; color: #d29922; }
+        /* Figurinha no resultado de busca */
+        .result img { width: 60px; height: 60px; object-fit: contain; border-radius: 4px; flex-shrink: 0; }
+        /* Figurinha no histórico */
+        .trade-item img { width: 36px; height: 36px; object-fit: contain; border-radius: 3px; flex-shrink: 0; }
+    </style>
+</head>
+<body>
+    <h1>&#127183; Figurinhas P2P &mdash; <span id="peer-id">...</span></h1>
+
+    <div class="grid">
+        <div class="card">
+            <h2>&#128230; Invent&aacute;rio</h2>
+            <div id="inventory"><span class="empty">Carregando...</span></div>
+        </div>
+        <div class="card">
+            <h2>&#128279; Vizinhos Conectados</h2>
+            <div id="peers"><span class="empty">Carregando...</span></div>
+        </div>
+    </div>
+
+    <div class="card full" style="margin-bottom:16px">
+        <h2>&#128269; Buscar Figurinha</h2>
+        <div class="search-row">
+            <input type="text" id="search-input" placeholder="ex: FIG-01" autocomplete="off" />
+            <button onclick="doSearch()">Buscar</button>
+        </div>
+        <div id="search-status"></div>
+        <div id="search-results"><span class="empty">Nenhum resultado ainda</span></div>
+    </div>
+
+    <div class="card full">
+        <h2>&#128203; Hist&oacute;rico de Trocas</h2>
+        <div id="trade-history"><span class="empty">Nenhuma troca ainda</span></div>
+    </div>
+
+    <div id="status-bar">&#9203; sincronizando...</div>
+
+    <script>
+        var IMG_BASE = 'https://raw.githubusercontent.com/rgcoelho01/album/main/docs/images/';
+        var state = { peer_id: '', inventory: {}, connected_peers: [], search_results: [], trade_history: [] };
+
+        function escHtml(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function imgTag(sid, size) {
+            var url = IMG_BASE + encodeURIComponent(sid) + '.png';
+            return '<img src="' + url + '" alt="' + escHtml(sid) + '" width="' + size + '" height="' + size + '" onerror="this.style.display=\'none\'">';
+        }
+
+        async function fetchState() {
+            try {
+                var res = await fetch('/api/state');
+                if (!res.ok) throw new Error(res.status);
+                state = await res.json();
+                render();
+                document.getElementById('status-bar').textContent = '✓ ' + new Date().toLocaleTimeString('pt-BR');
+            } catch (e) {
+                document.getElementById('status-bar').textContent = '✗ sem conexão ' + new Date().toLocaleTimeString('pt-BR');
+            }
+        }
+
+        function render() {
+            document.getElementById('peer-id').textContent = state.peer_id || '...';
+
+            var inv = state.inventory || {};
+            var invKeys = Object.keys(inv).sort();
+            document.getElementById('inventory').innerHTML = invKeys.length === 0
+                ? '<span class="empty">Inventário vazio</span>'
+                : '<div class="inv-grid">' + invKeys.map(function(sid) {
+                    return '<div class="fig-card">'
+                        + imgTag(sid, 70)
+                        + '<div class="fig-id">' + escHtml(sid) + '</div>'
+                        + '<div class="fig-qty">x' + inv[sid] + '</div>'
+                        + '</div>';
+                }).join('') + '</div>';
+
+            var peers = state.connected_peers || [];
+            document.getElementById('peers').innerHTML = peers.length === 0
+                ? '<span class="empty">Nenhum vizinho conectado</span>'
+                : peers.map(function(p) {
+                    return '<span class="badge peer">&#9679; ' + escHtml(p) + '</span>';
+                }).join('');
+
+            var results = (state.search_results || []).slice().reverse();
+            document.getElementById('search-results').innerHTML = results.length === 0
+                ? '<span class="empty">Nenhum resultado ainda</span>'
+                : results.map(function(r) {
+                    var peer = escHtml(r.from_peer);
+                    var sid = escHtml(r.sticker_id);
+                    var qid = (r.query_id || '').slice(0, 8);
+                    return '<div class="result">'
+                        + imgTag(r.sticker_id, 60)
+                        + '<div class="result-info">'
+                        + '<strong>' + sid + '</strong> disponível em <code>' + peer + '</code>'
+                        + '<br><span class="muted">query: ' + qid + '...</span>'
+                        + '<br><button class="trade-btn" onclick="doTrade(\'' + peer + '\',\'' + sid + '\')">Propor Troca</button>'
+                        + '</div></div>';
+                }).join('');
+
+            var trades = (state.trade_history || []).slice().reverse();
+            document.getElementById('trade-history').innerHTML = trades.length === 0
+                ? '<span class="empty">Nenhuma troca ainda</span>'
+                : trades.map(function(t) {
+                    var cls = t.status === 'rejeitada' ? ' rejected' : '';
+                    var arrow = t.type === 'enviada' ? '&#8599; Enviamos' : '&#8600; Recebemos';
+                    return '<div class="trade-item' + cls + '">'
+                        + imgTag(t.got, 36)
+                        + '<div>'
+                        + '<strong>[' + escHtml(t.status).toUpperCase() + ']</strong> '
+                        + arrow + ': dei <code>' + escHtml(t.gave) + '</code>'
+                        + ' | recebi <code>' + escHtml(t.got) + '</code>'
+                        + (t.counterparty ? ' <span class="muted">| ' + escHtml(t.counterparty) + '</span>' : '')
+                        + '</div></div>';
+                }).join('');
+        }
+
+        async function doSearch() {
+            var input = document.getElementById('search-input');
+            var sticker_id = input.value.trim().toUpperCase();
+            if (!sticker_id) return;
+            document.getElementById('search-status').textContent = 'Buscando ' + sticker_id + '...';
+            try {
+                var res = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sticker_id: sticker_id })
+                });
+                var data = await res.json();
+                document.getElementById('search-status').textContent = data.ok
+                    ? 'Busca iniciada para ' + sticker_id
+                    : 'Erro: ' + data.error;
+            } catch (e) {
+                document.getElementById('search-status').textContent = 'Erro de conexão';
+            }
+        }
+
+        async function doTrade(target_peer_id, want_sticker_id) {
+            if (!confirm('Propor troca com ' + target_peer_id + '?\nVocê oferece FIG-09 e quer ' + want_sticker_id)) return;
+            try {
+                var res = await fetch('/api/trade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_peer_id: target_peer_id, want_sticker_id: want_sticker_id })
+                });
+                var data = await res.json();
+                if (data.ok) {
+                    document.getElementById('search-status').textContent = 'TRADE_OFFER enviado para ' + target_peer_id;
+                } else {
+                    alert('Erro: ' + data.error);
+                }
+            } catch (e) {
+                alert('Erro de conexão');
+            }
+        }
+
+        document.getElementById('search-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') doSearch();
+        });
+
+        fetchState();
+        setInterval(fetchState, 2000);
+    </script>
+</body>
+</html>

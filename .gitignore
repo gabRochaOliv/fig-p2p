@@ -1,0 +1,5 @@
+.planning/
+__pycache__/
+*.pyc
+inventory.json
+peers.json
