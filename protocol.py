@@ -127,6 +127,7 @@ def build_trade_offer(sender_peer_id, receiver_peer_id, offer_sticker_id, want_s
     return {
         "type": TRADE_OFFER,
         "message_id": str(uuid.uuid4()),
+        "origin_peer_id": sender_peer_id,
         "sender_peer_id": sender_peer_id,
         "receiver_peer_id": receiver_peer_id,
         "offer_sticker_id": offer_sticker_id,
@@ -148,6 +149,7 @@ def build_trade_accept(sender_peer_id, receiver_peer_id, message_id,
     return {
         "type": TRADE_ACCEPT,
         "message_id": message_id,
+        "origin_peer_id": sender_peer_id,
         "sender_peer_id": sender_peer_id,
         "receiver_peer_id": receiver_peer_id,
         "offer_sticker_id": offer_sticker_id,
@@ -166,6 +168,7 @@ def build_trade_reject(sender_peer_id, receiver_peer_id, message_id,
     return {
         "type": TRADE_REJECT,
         "message_id": message_id,
+        "origin_peer_id": sender_peer_id,
         "sender_peer_id": sender_peer_id,
         "receiver_peer_id": receiver_peer_id,
         "offer_sticker_id": offer_sticker_id,
@@ -174,9 +177,12 @@ def build_trade_reject(sender_peer_id, receiver_peer_id, message_id,
 
 
 def build_transfer_confirm(sender_peer_id, receiver_peer_id, message_id,
-                           sent_sticker_id, received_sticker_id):
+                           offer_sticker_id, want_sticker_id):
     """
     Constrói mensagem TRANSFER_CONFIRM — confirma que os itens foram transferidos.
+
+    offer_sticker_id: figurinha que o remetente transferiu (enviou ao peer).
+    want_sticker_id:  figurinha que o remetente recebeu do peer.
 
     Returns:
         dict: Mensagem TRANSFER_CONFIRM.
@@ -184,10 +190,11 @@ def build_transfer_confirm(sender_peer_id, receiver_peer_id, message_id,
     return {
         "type": TRANSFER_CONFIRM,
         "message_id": message_id,
+        "origin_peer_id": sender_peer_id,
         "sender_peer_id": sender_peer_id,
         "receiver_peer_id": receiver_peer_id,
-        "sent_sticker_id": sent_sticker_id,
-        "received_sticker_id": received_sticker_id,
+        "offer_sticker_id": offer_sticker_id,
+        "want_sticker_id": want_sticker_id,
     }
 
 

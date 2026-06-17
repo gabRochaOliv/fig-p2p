@@ -53,6 +53,12 @@ async def _handle_http(reader, writer):
             await _handle_search(writer, body)
         elif method == "POST" and path == "/api/trade":
             await _handle_trade(writer, body)
+        elif method == "POST" and path == "/api/connect":
+            await _handle_connect(writer, body)
+        elif method == "POST" and path == "/api/trade/accept":
+            await _handle_trade_decision(writer, body, accept=True)
+        elif method == "POST" and path == "/api/trade/reject":
+            await _handle_trade_decision(writer, body, accept=False)
         else:
             await _send_response(writer, 404, b"Not Found", "text/plain")
     except Exception as e:
@@ -105,6 +111,10 @@ def _get_state():
         "connected_peers": list(_node.connected_peers.keys()),
         "search_results": _node.search_results[-50:],
         "trade_history": _node.trade_history[-50:],
+        "incoming_offers": [
+            {k: v for k, v in offer.items() if k != "ws"}
+            for offer in _node.incoming_offers.values()
+        ],
     }
 
 
@@ -133,6 +143,43 @@ async def _handle_trade(writer, body):
         if _node:
             asyncio.create_task(_node.initiate_trade_offer(target_peer_id, want_sticker_id))
         await _serve_json(writer, {"ok": True})
+    except Exception as e:
+        await _serve_json(writer, {"ok": False, "error": str(e)})
+
+
+async def _handle_trade_decision(writer, body, accept):
+    try:
+        data = json.loads(body) if body.strip() else {}
+        message_id = str(data.get("message_id", "")).strip()
+        if not message_id:
+            await _serve_json(writer, {"ok": False, "error": "message_id required"})
+            return
+        if _node:
+            if accept:
+                ok = await _node.accept_incoming_offer(message_id)
+            else:
+                ok = await _node.reject_incoming_offer(message_id)
+            await _serve_json(writer, {"ok": ok})
+        else:
+            await _serve_json(writer, {"ok": False, "error": "node not initialized"})
+    except Exception as e:
+        await _serve_json(writer, {"ok": False, "error": str(e)})
+
+
+async def _handle_connect(writer, body):
+    try:
+        data = json.loads(body) if body.strip() else {}
+        host = str(data.get("host", "")).strip()
+        port = int(data.get("port", 8080))
+        if not host:
+            await _serve_json(writer, {"ok": False, "error": "host required"})
+            return
+        if port < 1 or port > 65535:
+            await _serve_json(writer, {"ok": False, "error": "porta invalida"})
+            return
+        if _node:
+            asyncio.create_task(_node.connect_to_peer(host, port))
+        await _serve_json(writer, {"ok": True, "host": host, "port": port})
     except Exception as e:
         await _serve_json(writer, {"ok": False, "error": str(e)})
 

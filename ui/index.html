@@ -21,6 +21,7 @@
         button:hover { background: #2ea043; }
         button.trade-btn { background: #1f6feb; padding: 4px 10px; margin-top: 6px; }
         button.trade-btn:hover { background: #388bfd; }
+        button.trade-btn:disabled { background: #30363d; color: #8b949e; cursor: default; }
         .result { border-left: 3px solid #3fb950; padding: 8px 12px; margin: 6px 0; background: #0d1117; border-radius: 0 4px 4px 0; display: flex; align-items: center; gap: 12px; }
         .result-info { flex: 1; }
         .trade-item { border-left: 3px solid #d29922; padding: 8px 12px; margin: 6px 0; background: #0d1117; border-radius: 0 4px 4px 0; font-size: 0.85em; display: flex; align-items: center; gap: 10px; }
@@ -32,32 +33,62 @@
         .empty { color: #8b949e; font-style: italic; font-size: 0.85em; }
         /* Figurinha card no inventário */
         .inv-grid { display: flex; flex-wrap: wrap; gap: 12px; }
-        .fig-card { background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 8px; text-align: center; width: 90px; }
-        .fig-card img { width: 70px; height: 70px; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto 4px; }
+        .fig-card { background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; width: 130px; }
+        .fig-card img { width: 100px; height: 100px; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto 6px; }
         .fig-card .fig-id { font-size: 0.75em; color: #58a6ff; font-weight: bold; }
         .fig-card .fig-qty { font-size: 0.8em; color: #d29922; }
+        /* Card de peer conectado */
+        .peer-card { background: #21262d; border: 1px solid #3fb950; border-radius: 8px; padding: 10px; text-align: center; width: 110px; }
+        .peer-card img { width: 80px; height: 80px; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto 6px; }
+        .peer-card .peer-id { font-size: 0.75em; color: #3fb950; font-weight: bold; }
+        .peer-card .peer-dot { display: inline-block; width: 7px; height: 7px; background: #3fb950; border-radius: 50%; margin-right: 4px; }
         /* Figurinha no resultado de busca */
         .result img { width: 60px; height: 60px; object-fit: contain; border-radius: 4px; flex-shrink: 0; }
         /* Figurinha no histórico */
         .trade-item img { width: 36px; height: 36px; object-fit: contain; border-radius: 3px; flex-shrink: 0; }
+        /* Modal de confirmação de troca */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+        .modal-overlay.open { display: flex; }
+        .modal-box { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; min-width: 300px; max-width: 380px; width: 90%; }
+        .modal-box h3 { color: #c9d1d9; font-size: 1em; margin-bottom: 16px; }
+        .modal-trade-info { display: flex; align-items: center; gap: 16px; background: #0d1117; border-radius: 8px; padding: 12px; margin-bottom: 20px; }
+        .modal-trade-info img { width: 64px; height: 64px; object-fit: contain; border-radius: 4px; flex-shrink: 0; }
+        .modal-trade-info .modal-detail { font-size: 0.85em; line-height: 1.6; }
+        .modal-trade-info .modal-detail strong { color: #58a6ff; font-size: 1em; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-actions button { padding: 8px 18px; }
+        .modal-cancel { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+        .modal-cancel:hover { background: #30363d; }
+        .modal-confirm { background: #1f6feb; }
+        .modal-confirm:hover { background: #388bfd; }
     </style>
 </head>
 <body>
-    <h1>&#127183; Figurinhas P2P &mdash; <span id="peer-id">...</span></h1>
+    <h1>Figurinhas P2P &mdash; <span id="peer-id">...</span></h1>
 
     <div class="grid">
         <div class="card">
-            <h2>&#128230; Invent&aacute;rio</h2>
+            <h2>Invent&aacute;rio</h2>
             <div id="inventory"><span class="empty">Carregando...</span></div>
         </div>
         <div class="card">
-            <h2>&#128279; Vizinhos Conectados</h2>
+            <h2>Vizinhos Conectados</h2>
             <div id="peers"><span class="empty">Carregando...</span></div>
+            <div class="search-row" style="margin-top:12px">
+                <input type="text" id="connect-host" placeholder="IP do peer  ex: 172.16.3.10" autocomplete="off" />
+                <button onclick="doConnect()">Conectar</button>
+            </div>
+            <div id="connect-status" style="font-size:0.8em;color:#8b949e;margin-top:4px;min-height:16px"></div>
         </div>
     </div>
 
+    <div class="card full" id="offers-card" style="margin-bottom:16px;display:none;border-color:#d29922">
+        <h2 style="color:#d29922">Propostas Recebidas</h2>
+        <div id="incoming-offers"></div>
+    </div>
+
     <div class="card full" style="margin-bottom:16px">
-        <h2>&#128269; Buscar Figurinha</h2>
+        <h2>Buscar Figurinha</h2>
         <div class="search-row">
             <input type="text" id="search-input" placeholder="ex: FIG-01" autocomplete="off" />
             <button onclick="doSearch()">Buscar</button>
@@ -67,15 +98,35 @@
     </div>
 
     <div class="card full">
-        <h2>&#128203; Hist&oacute;rico de Trocas</h2>
+        <h2>Hist&oacute;rico de Trocas</h2>
         <div id="trade-history"><span class="empty">Nenhuma troca ainda</span></div>
     </div>
 
-    <div id="status-bar">&#9203; sincronizando...</div>
+    <div id="status-bar">sincronizando...</div>
+
+    <div class="modal-overlay" id="trade-modal">
+        <div class="modal-box">
+            <h3>Confirmar proposta de troca</h3>
+            <div class="modal-trade-info">
+                <img id="modal-img" src="" alt="" onerror="this.style.display='none'">
+                <div class="modal-detail">
+                    <strong id="modal-sid"></strong><br>
+                    disponivel em <code id="modal-peer"></code><br>
+                    <span class="muted">voce oferece <code id="modal-own"></code></span>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="modal-cancel" id="modal-btn-cancel">Cancelar</button>
+                <button class="modal-confirm" id="modal-btn-confirm">Enviar proposta</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         var IMG_BASE = 'https://raw.githubusercontent.com/rgcoelho01/album/main/docs/images/';
         var state = { peer_id: '', inventory: {}, connected_peers: [], search_results: [], trade_history: [] };
+        var prevStateJson = '';
+        var pendingTrades = new Set();
 
         function escHtml(s) {
             return String(s)
@@ -94,11 +145,16 @@
             try {
                 var res = await fetch('/api/state');
                 if (!res.ok) throw new Error(res.status);
-                state = await res.json();
-                render();
-                document.getElementById('status-bar').textContent = '✓ ' + new Date().toLocaleTimeString('pt-BR');
+                var newState = await res.json();
+                var newJson = JSON.stringify(newState);
+                if (newJson !== prevStateJson) {
+                    prevStateJson = newJson;
+                    state = newState;
+                    render();
+                }
+                document.getElementById('status-bar').textContent = new Date().toLocaleTimeString('pt-BR');
             } catch (e) {
-                document.getElementById('status-bar').textContent = '✗ sem conexão ' + new Date().toLocaleTimeString('pt-BR');
+                document.getElementById('status-bar').textContent = 'sem conexao ' + new Date().toLocaleTimeString('pt-BR');
             }
         }
 
@@ -106,7 +162,7 @@
             document.getElementById('peer-id').textContent = state.peer_id || '...';
 
             var inv = state.inventory || {};
-            var invKeys = Object.keys(inv).sort();
+            var invKeys = Object.keys(inv).filter(function(k) { return k && k.trim(); }).sort();
             document.getElementById('inventory').innerHTML = invKeys.length === 0
                 ? '<span class="empty">Inventário vazio</span>'
                 : '<div class="inv-grid">' + invKeys.map(function(sid) {
@@ -120,9 +176,42 @@
             var peers = state.connected_peers || [];
             document.getElementById('peers').innerHTML = peers.length === 0
                 ? '<span class="empty">Nenhum vizinho conectado</span>'
-                : peers.map(function(p) {
-                    return '<span class="badge peer">&#9679; ' + escHtml(p) + '</span>';
-                }).join('');
+                : '<div class="inv-grid">' + peers.map(function(p) {
+                    var num = p.replace('ALUNO-', '');
+                    var figId = 'FIG-' + num;
+                    return '<div class="peer-card">'
+                        + imgTag(figId, 80)
+                        + '<div class="peer-id"><span class="peer-dot"></span>' + escHtml(p) + '</div>'
+                        + '</div>';
+                }).join('') + '</div>';
+
+            // libera pendingTrades para figurinhas que já estão no inventário (todas as chaves sid|peer)
+            pendingTrades.forEach(function(key) {
+                var sid = key.split('|')[0];
+                if ((inv[sid] || 0) > 0) pendingTrades.delete(key);
+            });
+
+            var offers = state.incoming_offers || [];
+            var offersCard = document.getElementById('offers-card');
+            offersCard.style.display = offers.length > 0 ? '' : 'none';
+            document.getElementById('incoming-offers').innerHTML = offers.map(function(o) {
+                var mid = escHtml(o.message_id);
+                var peer = escHtml(o.from_peer);
+                var they_offer = escHtml(o.offer_sticker_id);
+                var they_want = escHtml(o.want_sticker_id);
+                return '<div class="result" style="justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                    + '<div style="display:flex;align-items:center;gap:12px">'
+                    + imgTag(o.offer_sticker_id, 52)
+                    + '<div class="result-info">'
+                    + '<strong>' + peer + '</strong> quer trocar<br>'
+                    + 'oferece <code>' + they_offer + '</code> | quer <code>' + they_want + '</code>'
+                    + '</div></div>'
+                    + '<div style="display:flex;gap:8px;align-items:center">'
+                    + '<button class="trade-btn" style="background:#238636" onclick="decideTrade(\'' + mid + '\',true)">Aceitar</button>'
+                    + '<button class="trade-btn" style="background:#b62324" onclick="decideTrade(\'' + mid + '\',false)">Recusar</button>'
+                    + '</div>'
+                    + '</div>';
+            }).join('');
 
             var results = (state.search_results || []).slice().reverse();
             document.getElementById('search-results').innerHTML = results.length === 0
@@ -131,12 +220,18 @@
                     var peer = escHtml(r.from_peer);
                     var sid = escHtml(r.sticker_id);
                     var qid = (r.query_id || '').slice(0, 8);
+                    var jatem = (inv[r.sticker_id] || 0) > 0;
+                    var pkey = r.sticker_id + '|' + r.from_peer;
+                    var pendente = pendingTrades.has(pkey);
+                    var disabled = jatem || pendente ? ' disabled' : '';
+                    var label = jatem ? 'Ja possui' : (pendente ? 'Proposta enviada...' : 'Propor Troca');
+                    var onclick = (jatem || pendente) ? '' : ' onclick="doTrade(\'' + peer + '\',\'' + sid + '\')"';
                     return '<div class="result">'
                         + imgTag(r.sticker_id, 60)
                         + '<div class="result-info">'
                         + '<strong>' + sid + '</strong> disponível em <code>' + peer + '</code>'
                         + '<br><span class="muted">query: ' + qid + '...</span>'
-                        + '<br><button class="trade-btn" onclick="doTrade(\'' + peer + '\',\'' + sid + '\')">Propor Troca</button>'
+                        + '<br><button class="trade-btn"' + disabled + onclick + '>' + label + '</button>'
                         + '</div></div>';
                 }).join('');
 
@@ -177,8 +272,37 @@
             }
         }
 
+        function showTradeModal(peer, sid) {
+            return new Promise(function(resolve) {
+                var modal = document.getElementById('trade-modal');
+                document.getElementById('modal-sid').textContent = sid;
+                document.getElementById('modal-peer').textContent = peer;
+                document.getElementById('modal-own').textContent = state.peer_id ? 'FIG-' + state.peer_id.replace('ALUNO-', '') : 'FIG-09';
+                var img = document.getElementById('modal-img');
+                img.src = IMG_BASE + encodeURIComponent(sid) + '.png';
+                img.style.display = '';
+                modal.classList.add('open');
+                function close(result) {
+                    modal.classList.remove('open');
+                    document.getElementById('modal-btn-confirm').removeEventListener('click', onConfirm);
+                    document.getElementById('modal-btn-cancel').removeEventListener('click', onCancel);
+                    modal.removeEventListener('click', onOverlay);
+                    resolve(result);
+                }
+                function onConfirm() { close(true); }
+                function onCancel() { close(false); }
+                function onOverlay(e) { if (e.target === modal) close(false); }
+                document.getElementById('modal-btn-confirm').addEventListener('click', onConfirm);
+                document.getElementById('modal-btn-cancel').addEventListener('click', onCancel);
+                modal.addEventListener('click', onOverlay);
+            });
+        }
+
         async function doTrade(target_peer_id, want_sticker_id) {
-            if (!confirm('Propor troca com ' + target_peer_id + '?\nVocê oferece FIG-09 e quer ' + want_sticker_id)) return;
+            if (!await showTradeModal(target_peer_id, want_sticker_id)) return;
+            var pkey = want_sticker_id + '|' + target_peer_id;
+            pendingTrades.add(pkey);
+            render();
             try {
                 var res = await fetch('/api/trade', {
                     method: 'POST',
@@ -187,17 +311,68 @@
                 });
                 var data = await res.json();
                 if (data.ok) {
-                    document.getElementById('search-status').textContent = 'TRADE_OFFER enviado para ' + target_peer_id;
+                    document.getElementById('search-status').textContent = 'Proposta enviada para ' + target_peer_id + ' — aguardando resposta';
                 } else {
+                    pendingTrades.delete(pkey);
+                    render();
                     alert('Erro: ' + data.error);
                 }
             } catch (e) {
+                pendingTrades.delete(pkey);
+                render();
                 alert('Erro de conexão');
+            }
+        }
+
+        async function decideTrade(message_id, accept) {
+            var url = accept ? '/api/trade/accept' : '/api/trade/reject';
+            try {
+                await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message_id: message_id })
+                });
+                await fetchState();
+            } catch (e) {
+                alert('Erro de conexao');
+            }
+        }
+
+        async function doConnect() {
+            var input = document.getElementById('connect-host');
+            var raw = input.value.trim();
+            if (!raw) return;
+            var host = raw, port = 8080;
+            if (raw.includes(':')) {
+                var parts = raw.split(':');
+                host = parts[0].trim();
+                port = parseInt(parts[1]) || 8080;
+            }
+            document.getElementById('connect-status').textContent = 'Conectando a ' + host + '...';
+            try {
+                var res = await fetch('/api/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ host: host, port: port })
+                });
+                var data = await res.json();
+                if (data.ok) {
+                    document.getElementById('connect-status').textContent = 'Conexao iniciada com ' + host + ':' + port;
+                    input.value = '';
+                } else {
+                    document.getElementById('connect-status').textContent = 'Erro: ' + data.error;
+                }
+            } catch (e) {
+                document.getElementById('connect-status').textContent = 'Erro de conexao';
             }
         }
 
         document.getElementById('search-input').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') doSearch();
+        });
+
+        document.getElementById('connect-host').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') doConnect();
         });
 
         fetchState();

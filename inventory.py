@@ -36,7 +36,8 @@ class Inventory:
         if os.path.exists(self.SAVE_FILE):
             try:
                 with open(self.SAVE_FILE, "r", encoding="utf-8") as f:
-                    self.items = json.load(f)
+                    loaded = json.load(f)
+                self.items = {k: v for k, v in loaded.items() if k and k.strip()}
                 print(f"[INVENTÁRIO] Carregado de {self.SAVE_FILE}")
                 return
             except Exception:
@@ -72,6 +73,8 @@ class Inventory:
             sticker_id (str): ID da figurinha a adicionar.
             qty (int): Quantidade a adicionar. Padrão: 1.
         """
+        if not sticker_id or not sticker_id.strip():
+            return
         self.items[sticker_id] = self.items.get(sticker_id, 0) + qty
         self._save()
 

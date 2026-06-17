@@ -49,6 +49,9 @@ trade_pending = {}     # message_id -> dict com detalhes da troca em andamento
 own_searches = {}      # query_id -> sticker_id (buscas iniciadas por este nó)
 search_results = []    # lista de {query_id, sticker_id, from_peer} para a UI
 trade_history = []     # lista de dicts com histórico de trocas para a UI
+incoming_offers = {}   # message_id -> dict com proposta recebida aguardando decisão (inclui 'ws')
+hit_history = set()    # (query_id, sender_peer_id) já processados — dedup de SEARCH_HIT
+trades_initiated = set()  # query_ids que já dispararam TRADE_OFFER — evita múltiplas ofertas
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +141,9 @@ async def initiate_trade_offer(target_peer_id, want_sticker_id):
     Oferece OWN_STICKER (FIG-09) em troca de want_sticker_id.
     Registra em trade_pending para correlacionar com TRADE_ACCEPT/REJECT futuros.
     """
+    if not inventory.has(OWN_STICKER):
+        print(f"[TRADE_OFFER] Sem {OWN_STICKER} disponível para oferecer, trade cancelado")
+        return
     peer_ws = connected_peers.get(target_peer_id)
     if not peer_ws:
         print(f"[TRADE_OFFER] {target_peer_id} não está em connected_peers, trade cancelado")
@@ -168,6 +174,7 @@ async def handle_hello(websocket, msg):
 
     - Registra o peer em connected_peers usando o sender_peer_id como chave.
     - Envia HELLO de volta para confirmar a troca de identidade.
+    - Ao conectar com um peer novo, busca automaticamente a figurinha dele.
 
     Args:
         websocket: Conexão WebSocket ativa.
@@ -179,6 +186,10 @@ async def handle_hello(websocket, msg):
     print(f"[HELLO] Conexão de {sender_peer_id}")
     if not already_known:
         await websocket.send(encode(build_hello(PEER_ID)))
+        # Busca automática pela figurinha do peer recém conectado
+        if sender_peer_id.startswith("ALUNO-"):
+            num = sender_peer_id.replace("ALUNO-", "")
+            asyncio.create_task(initiate_search(f"FIG-{num}"))
 
 
 async def handle_search(websocket, msg):
@@ -256,6 +267,11 @@ async def handle_search_hit(websocket, msg):
     sticker_id = msg.get("sticker_id", "")
     sender_peer_id = msg.get("sender_peer_id", "")
 
+    dedup_key = (query_id, sender_peer_id)
+    if dedup_key in hit_history:
+        return
+    hit_history.add(dedup_key)
+
     print(f"[SEARCH_HIT] {sender_peer_id} tem {sticker_id} | query={query_id}")
 
     search_results.append({
@@ -273,18 +289,16 @@ async def handle_trade_offer(websocket, msg):
     """
     Processa TRADE_OFFER recebido de outro nó.
 
-    Verifica se temos a figurinha que o ofertante quer (want_sticker_id).
-    - Se sim: aceita, atualiza inventário, envia TRADE_ACCEPT + TRANSFER_CONFIRM.
-    - Se não: rejeita com TRADE_REJECT sem alterar inventário.
+    Se não temos a figurinha pedida: rejeita imediatamente.
+    Se temos: armazena em incoming_offers para aprovação manual via UI.
     """
     sender = msg.get("sender_peer_id", "")
     message_id = msg.get("message_id", "")
-    offer_sticker_id = msg.get("offer_sticker_id", "")  # o que eles nos oferecem
-    want_sticker_id = msg.get("want_sticker_id", "")    # o que eles querem de nós
+    offer_sticker_id = msg.get("offer_sticker_id", "")
+    want_sticker_id = msg.get("want_sticker_id", "")
 
     peer_ws = connected_peers.get(sender, websocket)
 
-    # Verificar disponibilidade (TRADE-02, TRADE-07)
     if not inventory.has(want_sticker_id):
         reject = build_trade_reject(
             sender_peer_id=PEER_ID,
@@ -297,19 +311,40 @@ async def handle_trade_offer(websocket, msg):
         print(f"[TRADE_REJECT] Sem {want_sticker_id} para oferecer a {sender}")
         return
 
-    # Aceitar troca (TRADE-03)
+    incoming_offers[message_id] = {
+        "message_id": message_id,
+        "from_peer": sender,
+        "offer_sticker_id": offer_sticker_id,
+        "want_sticker_id": want_sticker_id,
+        "ws": peer_ws,
+    }
+    print(f"[TRADE_OFFER] Proposta de {sender}: oferecem {offer_sticker_id}, querem {want_sticker_id} — aguardando decisao")
+
+
+async def accept_incoming_offer(message_id):
+    """Aceita uma proposta de troca pendente em incoming_offers."""
+    offer = incoming_offers.pop(message_id, None)
+    if not offer:
+        return False
+
+    sender = offer["from_peer"]
+    offer_sticker_id = offer["offer_sticker_id"]
+    want_sticker_id = offer["want_sticker_id"]
+    peer_ws = offer["ws"]
+
+    # Do aceitante (nós): oferecemos want_sticker_id (o que eles queriam de nós)
+    #                     e queremos offer_sticker_id (o que eles nos ofereceram)
     accept = build_trade_accept(
         sender_peer_id=PEER_ID,
         receiver_peer_id=sender,
         message_id=message_id,
-        offer_sticker_id=offer_sticker_id,
-        want_sticker_id=want_sticker_id,
+        offer_sticker_id=want_sticker_id,
+        want_sticker_id=offer_sticker_id,
     )
     await _safe_send(peer_ws, accept)
 
-    # Atualizar inventário (TRADE-06)
-    inventory.remove(want_sticker_id)   # damos ao ofertante
-    inventory.add(offer_sticker_id)     # recebemos do ofertante
+    inventory.remove(want_sticker_id)
+    inventory.add(offer_sticker_id)
 
     trade_history.append({
         "status": "aceita",
@@ -319,28 +354,77 @@ async def handle_trade_offer(websocket, msg):
         "counterparty": sender,
     })
 
-    # Confirmar transferência (TRADE-05)
     confirm = build_transfer_confirm(
         sender_peer_id=PEER_ID,
         receiver_peer_id=sender,
         message_id=message_id,
-        sent_sticker_id=want_sticker_id,       # o que enviamos ao ofertante
-        received_sticker_id=offer_sticker_id,  # o que recebemos do ofertante
+        offer_sticker_id=want_sticker_id,
+        want_sticker_id=offer_sticker_id,
     )
     await _safe_send(peer_ws, confirm)
     print(f"[TRADE_ACCEPT] Troca com {sender}: dei {want_sticker_id}, recebi {offer_sticker_id}")
     print(f"[INVENTÁRIO] {inventory}")
+    return True
+
+
+async def reject_incoming_offer(message_id):
+    """Rejeita uma proposta de troca pendente em incoming_offers."""
+    offer = incoming_offers.pop(message_id, None)
+    if not offer:
+        return False
+
+    sender = offer["from_peer"]
+    offer_sticker_id = offer["offer_sticker_id"]
+    want_sticker_id = offer["want_sticker_id"]
+    peer_ws = offer["ws"]
+
+    reject = build_trade_reject(
+        sender_peer_id=PEER_ID,
+        receiver_peer_id=sender,
+        message_id=message_id,
+        offer_sticker_id=offer_sticker_id,
+        want_sticker_id=want_sticker_id,
+    )
+    await _safe_send(peer_ws, reject)
+    trade_history.append({
+        "status": "rejeitada",
+        "type": "recebida",
+        "gave": "—",
+        "got": "—",
+        "counterparty": sender,
+    })
+    print(f"[TRADE_REJECT] Proposta de {sender} rejeitada pelo usuário")
+    return True
 
 
 async def handle_trade_accept(websocket, msg):
     """
     Processa TRADE_ACCEPT recebido — nosso TRADE_OFFER foi aceito pelo peer.
 
-    Apenas loga a aceitação. O inventário é atualizado quando TRANSFER_CONFIRM chegar.
+    Atualiza o inventário aqui usando trade_pending, sem depender dos campos
+    do TRANSFER_CONFIRM (que pode ter nomes diferentes em outras implementações).
     """
     message_id = msg.get("message_id", "")
     sender = msg.get("sender_peer_id", "")
-    print(f"[TRADE_ACCEPT] Oferta aceita por {sender} | id={message_id}")
+    pending = trade_pending.pop(message_id, None)
+    if pending:
+        gave = pending.get("offer_sticker_id", "")
+        got = pending.get("want_sticker_id", "")
+        if gave:
+            inventory.remove(gave)
+        if got:
+            inventory.add(got)
+        trade_history.append({
+            "status": "aceita",
+            "type": "enviada",
+            "gave": gave,
+            "got": got,
+            "counterparty": sender,
+        })
+        print(f"[TRADE_ACCEPT] Troca com {sender}: dei {gave}, recebi {got}")
+        print(f"[INVENTÁRIO] {inventory}")
+    else:
+        print(f"[TRADE_ACCEPT] Oferta aceita por {sender} | id={message_id}")
 
 
 async def handle_trade_reject(websocket, msg):
@@ -372,23 +456,40 @@ async def handle_transfer_confirm(websocket, msg):
     """
     message_id = msg.get("message_id", "")
     sender = msg.get("sender_peer_id", "")
-    sent_sticker_id = msg.get("sent_sticker_id", "")         # o que eles enviaram para nós
-    received_sticker_id = msg.get("received_sticker_id", "")  # o que eles receberam de nós
+    # Prioriza campos do protocolo (offer/want); aceita sent/received como fallback legado
+    offer_sticker_id = (msg.get("offer_sticker_id") or msg.get("sent_sticker_id") or "").strip()
+    want_sticker_id = (msg.get("want_sticker_id") or msg.get("received_sticker_id") or "").strip()
 
-    # Atualizar inventário (TRADE-06): remover o que demos, adicionar o que recebemos
-    inventory.remove(received_sticker_id)
-    inventory.add(sent_sticker_id)
+    # trade_pending já foi consumido no TRADE_ACCEPT — apenas loga a confirmação
+    if message_id not in trade_pending:
+        print(f"[TRANSFER_CONFIRM] Confirmação de {sender} (troca já processada no TRADE_ACCEPT)")
+        return
+
+    # Fallback para implementações que não enviam TRADE_ACCEPT com dados completos
+    if not offer_sticker_id or not want_sticker_id:
+        pending = trade_pending[message_id]
+        offer_sticker_id = offer_sticker_id or pending.get("offer_sticker_id", "")
+        want_sticker_id = want_sticker_id or pending.get("want_sticker_id", "")
+
+    if not offer_sticker_id or not want_sticker_id:
+        print(f"[TRANSFER_CONFIRM] Campos ausentes de {sender}, troca ignorada")
+        trade_pending.pop(message_id, None)
+        return
+
+    # offer_sticker_id = o que o peer nos enviou (= o que ganhamos)
+    # want_sticker_id  = o que o peer recebeu de nós (= o que demos)
+    inventory.remove(want_sticker_id)
+    inventory.add(offer_sticker_id)
 
     trade_pending.pop(message_id, None)
     trade_history.append({
         "status": "aceita",
         "type": "enviada",
-        "gave": received_sticker_id,
-        "got": sent_sticker_id,
+        "gave": want_sticker_id,
+        "got": offer_sticker_id,
         "counterparty": sender,
     })
-    print(f"[TRANSFER_CONFIRM] Troca concluída com {sender}")
-    print(f"  Dei: {received_sticker_id} | Recebi: {sent_sticker_id}")
+    print(f"[TRANSFER_CONFIRM] Troca concluída com {sender}: dei {want_sticker_id}, recebi {offer_sticker_id}")
     print(f"[INVENTÁRIO] {inventory}")
 
 
