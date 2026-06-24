@@ -28,8 +28,7 @@
         .trade-item.rejected { border-color: #f85149; }
         .muted { color: #8b949e; font-size: 0.8em; }
         code { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
-        #status-bar { position: fixed; bottom: 12px; right: 16px; background: #21262d; border: 1px solid #30363d; padding: 4px 12px; border-radius: 20px; font-size: 0.75em; color: #8b949e; }
-        #search-status { font-size: 0.8em; color: #8b949e; margin-top: 4px; min-height: 16px; }
+#search-status { font-size: 0.8em; color: #8b949e; margin-top: 4px; min-height: 16px; }
         .empty { color: #8b949e; font-style: italic; font-size: 0.85em; }
         /* Figurinha card no inventário */
         .inv-grid { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -73,9 +72,10 @@
         </div>
         <div class="card">
             <h2>Vizinhos Conectados</h2>
-            <div id="peers"><span class="empty">Carregando...</span></div>
-            <div class="search-row" style="margin-top:12px">
-                <input type="text" id="connect-host" placeholder="IP do peer  ex: 172.16.3.10" autocomplete="off" />
+            <div id="peers" style="display:flex;flex-direction:column;gap:10px"><span class="empty">Carregando...</span></div>
+            <div id="configured-peers-section" style="margin-top:12px"></div>
+            <div class="search-row" style="margin-top:8px">
+                <input type="text" id="connect-host" placeholder="" autocomplete="off" />
                 <button onclick="doConnect()">Conectar</button>
             </div>
             <div id="connect-status" style="font-size:0.8em;color:#8b949e;margin-top:4px;min-height:16px"></div>
@@ -90,7 +90,7 @@
     <div class="card full" style="margin-bottom:16px">
         <h2>Buscar Figurinha</h2>
         <div class="search-row">
-            <input type="text" id="search-input" placeholder="ex: FIG-01" autocomplete="off" />
+            <input type="text" id="search-input" placeholder="" autocomplete="off" />
             <button onclick="doSearch()">Buscar</button>
         </div>
         <div id="search-status"></div>
@@ -102,18 +102,20 @@
         <div id="trade-history"><span class="empty">Nenhuma troca ainda</span></div>
     </div>
 
-    <div id="status-bar">sincronizando...</div>
 
     <div class="modal-overlay" id="trade-modal">
         <div class="modal-box">
-            <h3>Confirmar proposta de troca</h3>
+            <h3>Propor troca</h3>
             <div class="modal-trade-info">
                 <img id="modal-img" src="" alt="" onerror="this.style.display='none'">
                 <div class="modal-detail">
-                    <strong id="modal-sid"></strong><br>
-                    disponivel em <code id="modal-peer"></code><br>
-                    <span class="muted">voce oferece <code id="modal-own"></code></span>
+                    Você quer: <strong id="modal-sid"></strong><br>
+                    <span class="muted">disponível em <code id="modal-peer"></code></span>
                 </div>
+            </div>
+            <div style="margin-bottom:16px">
+                <label style="font-size:0.85em;color:#8b949e;display:block;margin-bottom:6px">Você oferece em troca:</label>
+                <select id="modal-offer-select" style="width:100%;background:#21262d;color:#c9d1d9;border:1px solid #30363d;padding:8px 10px;border-radius:6px;font-family:inherit;font-size:0.9em;cursor:pointer"></select>
             </div>
             <div class="modal-actions">
                 <button class="modal-cancel" id="modal-btn-cancel">Cancelar</button>
@@ -152,9 +154,7 @@
                     state = newState;
                     render();
                 }
-                document.getElementById('status-bar').textContent = new Date().toLocaleTimeString('pt-BR');
             } catch (e) {
-                document.getElementById('status-bar').textContent = 'sem conexao ' + new Date().toLocaleTimeString('pt-BR');
             }
         }
 
@@ -174,22 +174,93 @@
                 }).join('') + '</div>';
 
             var peers = state.connected_peers || [];
+            var peerInvs = state.peer_inventories || {};
+            var peerNeighbors = state.peer_neighbors || {};
+            var outbound = state.outbound_peers || [];
             document.getElementById('peers').innerHTML = peers.length === 0
                 ? '<span class="empty">Nenhum vizinho conectado</span>'
-                : '<div class="inv-grid">' + peers.map(function(p) {
+                : peers.map(function(p) {
                     var num = p.replace('ALUNO-', '');
                     var figId = 'FIG-' + num;
-                    return '<div class="peer-card">'
-                        + imgTag(figId, 80)
-                        + '<div class="peer-id"><span class="peer-dot"></span>' + escHtml(p) + '</div>'
+                    var isOutbound = outbound.indexOf(p) !== -1;
+
+                    // Peers que este vizinho conhece (reportados no HELLO)
+                    var theirPeers = (peerNeighbors[p] || []);
+                    var neighborsHtml = theirPeers.length === 0
+                        ? ''
+                        : '<div style="margin-top:6px;padding:6px 8px;background:#0d1117;border-radius:6px;border:1px solid #21262d">'
+                            + '<span style="font-size:0.72em;color:#8b949e">Vizinhos de ' + escHtml(p) + ': </span>'
+                            + theirPeers.map(function(n) {
+                                var display = String(n).replace(/^ws:\/\//, '').replace(/^wss:\/\//, '');
+                                return '<span class="badge" style="font-size:0.72em">' + escHtml(display) + '</span>';
+                            }).join(' ')
+                            + '</div>';
+
+                    // Figurinhas conhecidas deste peer
+                    var peerStickers = (peerInvs[p] || []).slice().sort();
+                    var stickersHtml = peerStickers.length === 0
+                        ? '<span class="muted" style="font-size:0.75em">Nenhuma figurinha conhecida. Faça uma busca para descobrir.</span>'
+                        : '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">'
+                            + peerStickers.map(function(sid) {
+                                var jatem = (inv[sid] || 0) > 0;
+                                var pkey = sid + '|' + p;
+                                var pendente = pendingTrades.has(pkey);
+                                var disabled = jatem || pendente ? ' disabled' : '';
+                                var btnLabel = jatem ? 'Já possui' : (pendente ? '...' : 'Trocar');
+                                var onclick = (jatem || pendente) ? '' : ' onclick="doTrade(\'' + escHtml(p) + '\',\'' + escHtml(sid) + '\')"';
+                                var highlight = jatem ? 'border:1px solid #30363d;opacity:0.55' : 'border:1px solid #d29922';
+                                return '<div style="background:#0d1117;border-radius:6px;padding:5px;text-align:center;' + highlight + '">'
+                                    + imgTag(sid, 44)
+                                    + '<div style="font-size:0.7em;color:#58a6ff">' + escHtml(sid) + '</div>'
+                                    + (jatem ? '<div style="font-size:0.65em;color:#8b949e">×' + (inv[sid] || 0) + '</div>' : '<div style="font-size:0.65em;color:#d29922">novo!</div>')
+                                    + '<button class="trade-btn" style="margin-top:3px;padding:2px 7px;font-size:0.72em"' + disabled + onclick + '>' + btnLabel + '</button>'
+                                    + '</div>';
+                            }).join('')
+                            + '</div>';
+                    var borderColor = isOutbound ? '#3fb950' : '#58a6ff';
+                    var label = isOutbound
+                        ? '<span style="font-size:0.7em;background:#0d1117;color:#3fb950;border:1px solid #3fb950;border-radius:10px;padding:1px 7px;margin-left:6px">você conectou</span>'
+                        : '<span style="font-size:0.7em;background:#0d1117;color:#58a6ff;border:1px solid #58a6ff;border-radius:10px;padding:1px 7px;margin-left:6px">conectou em você</span>';
+                    return '<div class="card" style="margin-bottom:0;border-color:' + borderColor + '">'
+                        + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+                        + imgTag(figId, 36)
+                        + '<strong style="color:' + borderColor + '"><span style="display:inline-block;width:7px;height:7px;background:' + borderColor + ';border-radius:50%;margin-right:4px"></span>' + escHtml(p) + '</strong>'
+                        + label
+                        + '</div>'
+                        + neighborsHtml
+                        + stickersHtml
                         + '</div>';
-                }).join('') + '</div>';
+                }).join('');
 
             // libera pendingTrades para figurinhas que já estão no inventário (todas as chaves sid|peer)
             pendingTrades.forEach(function(key) {
                 var sid = key.split('|')[0];
                 if ((inv[sid] || 0) > 0) pendingTrades.delete(key);
             });
+
+            var cfgPeers = state.configured_peers || [];
+            var ipMap = state.peer_ip_map || {};
+            var cfgSection = document.getElementById('configured-peers-section');
+            if (cfgPeers.length === 0) {
+                cfgSection.innerHTML = '';
+            } else {
+                cfgSection.innerHTML = '<div style="font-size:0.75em;color:#8b949e;margin-bottom:5px;text-transform:uppercase;letter-spacing:1px">IPs configurados</div>'
+                    + cfgPeers.map(function(p) {
+                        var key = p.host + ':' + (p.port || 8080);
+                        var peerId = ipMap[key];
+                        var connected = peerId && (state.connected_peers || []).indexOf(peerId) !== -1;
+                        var statusBadge = connected
+                            ? '<span style="font-size:0.72em;color:#3fb950;border:1px solid #3fb950;border-radius:10px;padding:1px 7px">✓ ' + escHtml(peerId) + '</span>'
+                            : '<span style="font-size:0.72em;color:#8b949e;border:1px solid #30363d;border-radius:10px;padding:1px 7px">● tentando...</span>';
+                        return '<div style="display:flex;align-items:center;justify-content:space-between;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:5px 10px;margin-bottom:4px">'
+                            + '<div style="display:flex;align-items:center;gap:8px">'
+                            + '<code style="font-size:0.82em;color:#c9d1d9">' + escHtml(key) + '</code>'
+                            + statusBadge
+                            + '</div>'
+                            + '<button onclick="removePeer(\'' + escHtml(p.host) + '\',' + parseInt(p.port || 8080) + ')" style="background:#b62324;color:#fff;border:none;padding:2px 9px;border-radius:4px;font-size:0.75em;cursor:pointer">Remover</button>'
+                            + '</div>';
+                    }).join('');
+            }
 
             var offers = state.incoming_offers || [];
             var offersCard = document.getElementById('offers-card');
@@ -220,12 +291,11 @@
                     var peer = escHtml(r.from_peer);
                     var sid = escHtml(r.sticker_id);
                     var qid = (r.query_id || '').slice(0, 8);
-                    var jatem = (inv[r.sticker_id] || 0) > 0;
                     var pkey = r.sticker_id + '|' + r.from_peer;
                     var pendente = pendingTrades.has(pkey);
-                    var disabled = jatem || pendente ? ' disabled' : '';
-                    var label = jatem ? 'Ja possui' : (pendente ? 'Proposta enviada...' : 'Propor Troca');
-                    var onclick = (jatem || pendente) ? '' : ' onclick="doTrade(\'' + peer + '\',\'' + sid + '\')"';
+                    var disabled = pendente ? ' disabled' : '';
+                    var label = pendente ? 'Proposta enviada...' : 'Propor Troca';
+                    var onclick = pendente ? '' : ' onclick="doTrade(\'' + peer + '\',\'' + sid + '\')"';
                     return '<div class="result">'
                         + imgTag(r.sticker_id, 60)
                         + '<div class="result-info">'
@@ -277,10 +347,29 @@
                 var modal = document.getElementById('trade-modal');
                 document.getElementById('modal-sid').textContent = sid;
                 document.getElementById('modal-peer').textContent = peer;
-                document.getElementById('modal-own').textContent = state.peer_id ? 'FIG-' + state.peer_id.replace('ALUNO-', '') : 'FIG-09';
                 var img = document.getElementById('modal-img');
                 img.src = IMG_BASE + encodeURIComponent(sid) + '.png';
                 img.style.display = '';
+
+                // Popula o select com figurinhas do inventário (qty > 0)
+                var sel = document.getElementById('modal-offer-select');
+                sel.innerHTML = '';
+                var inv = state.inventory || {};
+                var ownSid = state.peer_id ? 'FIG-' + state.peer_id.replace('ALUNO-', '') : 'FIG-09';
+                Object.keys(inv).filter(function(k) { return k && inv[k] > 0; }).sort().forEach(function(k) {
+                    var opt = document.createElement('option');
+                    opt.value = k;
+                    opt.textContent = k + '  (×' + inv[k] + ')';
+                    if (k === ownSid) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                if (sel.options.length === 0) {
+                    var opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'Inventário vazio';
+                    sel.appendChild(opt);
+                }
+
                 modal.classList.add('open');
                 function close(result) {
                     modal.classList.remove('open');
@@ -289,9 +378,12 @@
                     modal.removeEventListener('click', onOverlay);
                     resolve(result);
                 }
-                function onConfirm() { close(true); }
-                function onCancel() { close(false); }
-                function onOverlay(e) { if (e.target === modal) close(false); }
+                function onConfirm() {
+                    var chosen = document.getElementById('modal-offer-select').value;
+                    close(chosen || null);
+                }
+                function onCancel() { close(null); }
+                function onOverlay(e) { if (e.target === modal) close(null); }
                 document.getElementById('modal-btn-confirm').addEventListener('click', onConfirm);
                 document.getElementById('modal-btn-cancel').addEventListener('click', onCancel);
                 modal.addEventListener('click', onOverlay);
@@ -299,7 +391,8 @@
         }
 
         async function doTrade(target_peer_id, want_sticker_id) {
-            if (!await showTradeModal(target_peer_id, want_sticker_id)) return;
+            var offerSid = await showTradeModal(target_peer_id, want_sticker_id);
+            if (!offerSid) return;
             var pkey = want_sticker_id + '|' + target_peer_id;
             pendingTrades.add(pkey);
             render();
@@ -307,7 +400,7 @@
                 var res = await fetch('/api/trade', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ target_peer_id: target_peer_id, want_sticker_id: want_sticker_id })
+                    body: JSON.stringify({ target_peer_id: target_peer_id, want_sticker_id: want_sticker_id, offer_sticker_id: offerSid })
                 });
                 var data = await res.json();
                 if (data.ok) {
@@ -335,6 +428,19 @@
                 await fetchState();
             } catch (e) {
                 alert('Erro de conexao');
+            }
+        }
+
+        async function removePeer(host, port) {
+            try {
+                await fetch('/api/peers/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ host: host, port: port })
+                });
+                await fetchState();
+            } catch (e) {
+                alert('Erro ao remover peer');
             }
         }
 

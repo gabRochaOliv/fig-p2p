@@ -1,14 +1,3 @@
-"""
-http_server.py — Servidor HTTP para a Web UI (porta 8081).
-
-Usa asyncio.start_server — integra no mesmo event loop do node.py.
-Endpoints:
-  GET  /          → serve ui/index.html
-  GET  /api/state → JSON com estado atual do nó
-  POST /api/search → inicia busca por inundação
-  POST /api/trade  → envia TRADE_OFFER
-"""
-
 import asyncio
 import json
 import os
@@ -18,12 +7,13 @@ HTTP_PORT = 8081
 _UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 
 
+# Injeta referência ao módulo node para acesso ao estado compartilhado
 def set_node(node_module):
-    """Injeta referência ao módulo node para acesso ao estado compartilhado."""
     global _node
     _node = node_module
 
 
+# Handler principal: lê a requisição HTTP e despacha para o endpoint correto
 async def _handle_http(reader, writer):
     try:
         raw = await asyncio.wait_for(reader.read(8192), timeout=10.0)
@@ -59,6 +49,8 @@ async def _handle_http(reader, writer):
             await _handle_trade_decision(writer, body, accept=True)
         elif method == "POST" and path == "/api/trade/reject":
             await _handle_trade_decision(writer, body, accept=False)
+        elif method == "POST" and path == "/api/peers/remove":
+            await _handle_peer_remove(writer, body)
         else:
             await _send_response(writer, 404, b"Not Found", "text/plain")
     except Exception as e:
@@ -71,6 +63,7 @@ async def _handle_http(reader, writer):
             pass
 
 
+# Serve um arquivo estático do disco
 async def _serve_file(writer, filepath, content_type):
     try:
         with open(filepath, "rb") as f:
@@ -80,15 +73,15 @@ async def _serve_file(writer, filepath, content_type):
         await _send_response(writer, 404, b"Not Found", "text/plain")
 
 
+# Serializa dict para JSON e envia como resposta HTTP
 async def _serve_json(writer, data):
     content = json.dumps(data, ensure_ascii=False).encode("utf-8")
     await _send_response(writer, 200, content, "application/json")
 
 
+# Monta e envia resposta HTTP com headers CORS
 async def _send_response(writer, status, body, content_type):
-    status_text = {
-        200: "OK", 204: "No Content", 404: "Not Found", 400: "Bad Request"
-    }.get(status, "OK")
+    status_text = {200: "OK", 204: "No Content", 404: "Not Found", 400: "Bad Request"}.get(status, "OK")
     headers = (
         f"HTTP/1.1 {status} {status_text}\r\n"
         f"Content-Type: {content_type}\r\n"
@@ -102,6 +95,7 @@ async def _send_response(writer, status, body, content_type):
     await writer.drain()
 
 
+# Retorna estado completo do nó para a UI: inventário, peers, buscas, trocas
 def _get_state():
     if not _node:
         return {"error": "node not initialized"}
@@ -115,9 +109,15 @@ def _get_state():
             {k: v for k, v in offer.items() if k != "ws"}
             for offer in _node.incoming_offers.values()
         ],
+        "peer_inventories": dict(_node.peer_inventories),
+        "peer_neighbors": dict(_node.peer_neighbors),
+        "configured_peers": _node.load_peers(),
+        "outbound_peers": list(_node.outbound_peers),
+        "peer_ip_map": dict(_node.peer_ip_map),
     }
 
 
+# Inicia busca por inundação para o sticker_id recebido no body
 async def _handle_search(writer, body):
     try:
         data = json.loads(body) if body.strip() else {}
@@ -132,21 +132,26 @@ async def _handle_search(writer, body):
         await _serve_json(writer, {"ok": False, "error": str(e)})
 
 
+# Envia TRADE_OFFER ao peer alvo com a figurinha escolhida
 async def _handle_trade(writer, body):
     try:
         data = json.loads(body) if body.strip() else {}
         target_peer_id = str(data.get("target_peer_id", "")).strip()
         want_sticker_id = str(data.get("want_sticker_id", "")).strip()
+        offer_sticker_id = str(data.get("offer_sticker_id", "")).strip() or None
         if not target_peer_id or not want_sticker_id:
             await _serve_json(writer, {"ok": False, "error": "target_peer_id and want_sticker_id required"})
             return
         if _node:
-            asyncio.create_task(_node.initiate_trade_offer(target_peer_id, want_sticker_id))
-        await _serve_json(writer, {"ok": True})
+            ok, err = await _node.initiate_trade_offer(target_peer_id, want_sticker_id, offer_sticker_id)
+            await _serve_json(writer, {"ok": ok, "error": err if not ok else ""})
+        else:
+            await _serve_json(writer, {"ok": False, "error": "node not initialized"})
     except Exception as e:
         await _serve_json(writer, {"ok": False, "error": str(e)})
 
 
+# Aceita ou rejeita proposta de troca recebida pelo message_id
 async def _handle_trade_decision(writer, body, accept):
     try:
         data = json.loads(body) if body.strip() else {}
@@ -166,6 +171,7 @@ async def _handle_trade_decision(writer, body, accept):
         await _serve_json(writer, {"ok": False, "error": str(e)})
 
 
+# Inicia conexão WebSocket ao host:porta informado
 async def _handle_connect(writer, body):
     try:
         data = json.loads(body) if body.strip() else {}
@@ -178,14 +184,31 @@ async def _handle_connect(writer, body):
             await _serve_json(writer, {"ok": False, "error": "porta invalida"})
             return
         if _node:
+            _node.add_configured_peer(host, port)
             asyncio.create_task(_node.connect_to_peer(host, port))
         await _serve_json(writer, {"ok": True, "host": host, "port": port})
     except Exception as e:
         await _serve_json(writer, {"ok": False, "error": str(e)})
 
 
+# Remove um peer de peers.json pelo host e porta
+async def _handle_peer_remove(writer, body):
+    try:
+        data = json.loads(body) if body.strip() else {}
+        host = str(data.get("host", "")).strip()
+        port = int(data.get("port", 8080))
+        if not host:
+            await _serve_json(writer, {"ok": False, "error": "host required"})
+            return
+        if _node:
+            _node.remove_configured_peer(host, port)
+        await _serve_json(writer, {"ok": True})
+    except Exception as e:
+        await _serve_json(writer, {"ok": False, "error": str(e)})
+
+
+# Inicia o servidor HTTP e retorna o objeto server
 async def start(port=HTTP_PORT):
-    """Inicia o servidor HTTP e retorna o objeto server."""
     server = await asyncio.start_server(_handle_http, "0.0.0.0", port)
     print(f"[HTTP] Servidor UI em http://localhost:{port}")
     return server
