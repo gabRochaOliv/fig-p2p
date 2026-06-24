@@ -32,7 +32,7 @@ class Inventory:
     def has(self, sticker_id, qty=1):
         return self.items.get(sticker_id, 0) >= qty
 
-    # Adiciona qty cópias e salva
+    # Adiciona qty cópias e salva (atualiza o inventário)
     def add(self, sticker_id, qty=1):
         if not sticker_id or not sticker_id.strip():
             return

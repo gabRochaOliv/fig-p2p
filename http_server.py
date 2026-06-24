@@ -7,7 +7,7 @@ HTTP_PORT = 8081
 _UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 
 
-# Injeta referência ao módulo node para acesso ao estado compartilhado
+# _node é o node.py 
 def set_node(node_module):
     global _node
     _node = node_module
@@ -130,7 +130,6 @@ async def _handle_search(writer, body):
         await _serve_json(writer, {"ok": True, "sticker_id": sticker_id})
     except Exception as e:
         await _serve_json(writer, {"ok": False, "error": str(e)})
-
 
 # Envia TRADE_OFFER ao peer alvo com a figurinha escolhida
 async def _handle_trade(writer, body):

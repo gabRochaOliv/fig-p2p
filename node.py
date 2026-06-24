@@ -9,6 +9,7 @@ import websockets.exceptions
 
 import http_server
 
+# traz todas as funções de protocol.py
 from protocol import (
     encode, decode,
     build_hello, build_search, build_search_hit, build_search_miss,
@@ -24,20 +25,20 @@ PORT = 8080
 
 # Estado global compartilhado entre todas as coroutines
 inventory = Inventory(PEER_ID, OWN_STICKER, INITIAL_COUNT)
-connected_peers = {}    # peer_id -> websocket
-query_history = set()   # query_ids já processados (dedup de SEARCH)
-own_searches = {}       # query_id -> sticker_id das buscas iniciadas por este nó
-trade_pending = {}      # message_id -> dados da troca aguardando resposta
-search_results = []     # resultados de busca exibidos na UI
-trade_history = []      # histórico de trocas exibido na UI
-incoming_offers = {}    # message_id -> proposta recebida aguardando decisão do usuário
-hit_history = set()     # (query_id, sender_peer_id) processados — dedup de SEARCH_HIT
-peer_inventories = {}   # peer_id -> lista de figurinhas descobertas via HELLO/SEARCH_HIT
-peer_neighbors = {}     # peer_id -> peers que este vizinho reportou no seu HELLO
-outbound_peers = set()  # peer_ids de conexões que NÓS iniciamos (vs inbound)
-_outbound_ws = set()    # websockets de conexões de saída (para identificar peer_id no HELLO)
-_outbound_ws_info = {}  # websocket -> (host, port) das conexões de saída
-peer_ip_map = {}        # "host:port" -> peer_id resolvido após HELLO
+connected_peers = {}    
+query_history = set()   
+own_searches = {}       
+trade_pending = {}      
+search_results = []     
+trade_history = []      
+incoming_offers = {}    
+hit_history = set()     
+peer_inventories = {}  
+peer_neighbors = {}     
+outbound_peers = set()  
+_outbound_ws = set()    
+_outbound_ws_info = {}  
+peer_ip_map = {}        
 
 
 # Obtém o IP local para preencher origin_peer_ip nas mensagens SEARCH
@@ -88,7 +89,7 @@ def add_configured_peer(host, port):
         print(f"[PEERS] {host}:{port} adicionado a peers.json")
 
 
-# Remove um peer de peers.json pelo host e porta
+# Remover um peer de peers.json pelo host e porta
 def remove_configured_peer(host, port):
     peers = load_peers()
     new_peers = [p for p in peers if not (p["host"] == host and int(p.get("port", 8080)) == int(port))]
@@ -153,7 +154,7 @@ async def handle_hello(websocket, msg):
     already_known = sender_peer_id in connected_peers
     connected_peers[sender_peer_id] = websocket
     if websocket in _outbound_ws:
-        outbound_peers.add(sender_peer_id)
+        outbound_peers.add(sender_peer_id) # Quem EU conectei
         info = _outbound_ws_info.get(websocket)
         if info:
             peer_ip_map[f"{info[0]}:{info[1]}"] = sender_peer_id
@@ -205,10 +206,13 @@ async def handle_search(websocket, msg):
         target_ws = connected_peers.get(origin_peer_id, websocket)
         await _safe_send(target_ws, hit)
         print(f"[SEARCH_HIT] Tenho {sticker_id} | enviando HIT para {origin_peer_id}")
-
+    # TTL para não dar um looping infinito 
     if ttl > 0:
         for peer_id, peer_ws in list(connected_peers.items()):
+
+            #Isso evita mandar a busca de volta para quem acabou de enviar
             if peer_id != sender_peer_id:
+
                 relay = build_search(
                     origin_peer_id=origin_peer_id,
                     origin_peer_ip=origin_peer_ip,
@@ -541,7 +545,7 @@ async def main():
     async with websockets.serve(server_handler, "0.0.0.0", PORT) as server:
         print(f"[{PEER_ID}] Servidor P2P ouvindo em 0.0.0.0:{PORT}")
         print(f"[{PEER_ID}] Inventário inicial: {inventory}")
-        http_server.set_node(sys.modules[__name__])
+        http_server.set_node(sys.modules[__name__]) # passa o node.py inteiro para o http_server
         await http_server.start()
         asyncio.create_task(connect_to_all_peers())
         await asyncio.Future()

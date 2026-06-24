@@ -1,6 +1,7 @@
 import uuid
 import json
 
+# constantes que evitam erros de digitação
 HELLO = "HELLO"
 SEARCH = "SEARCH"
 SEARCH_HIT = "SEARCH_HIT"
@@ -32,7 +33,7 @@ def build_search(origin_peer_id, origin_peer_ip, sender_peer_id, receiver_peer_i
         "origin_peer_ip": origin_peer_ip,
         "sender_peer_id": sender_peer_id,
         "receiver_peer_id": receiver_peer_id,
-        "query_id": query_id if query_id is not None else str(uuid.uuid4()),
+        "query_id": query_id if query_id is not None else str(uuid.uuid4()), #deduplicar a mensagem na rede
         "ttl": ttl,
         "sticker_id": sticker_id,
     }

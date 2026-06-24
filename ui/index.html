@@ -130,6 +130,7 @@
         var prevStateJson = '';
         var pendingTrades = new Set();
 
+        // Escapa caracteres especiais para não quebrar o HTML gerado dinamicamente
         function escHtml(s) {
             return String(s)
                 .replace(/&/g, '&amp;')
@@ -138,11 +139,14 @@
                 .replace(/"/g, '&quot;');
         }
 
+        // Monta a tag <img> de uma figurinha buscando a imagem no GitHub do professor
         function imgTag(sid, size) {
             var url = IMG_BASE + encodeURIComponent(sid) + '.png';
             return '<img src="' + url + '" alt="' + escHtml(sid) + '" width="' + size + '" height="' + size + '" onerror="this.style.display=\'none\'">';
         }
 
+        // Busca o estado atual do nó via GET /api/state e redesenha a tela se algo mudou
+        // Roda automaticamente a cada 2 segundos (ver setInterval no final)
         async function fetchState() {
             try {
                 var res = await fetch('/api/state');
@@ -158,6 +162,8 @@
             }
         }
 
+        // Redesenha toda a tela com os dados que estão na variável `state`
+        // Não faz nenhuma requisição HTTP — só lê o state e monta o HTML
         function render() {
             document.getElementById('peer-id').textContent = state.peer_id || '...';
 
@@ -175,26 +181,11 @@
 
             var peers = state.connected_peers || [];
             var peerInvs = state.peer_inventories || {};
-            var peerNeighbors = state.peer_neighbors || {};
-            var outbound = state.outbound_peers || [];
             document.getElementById('peers').innerHTML = peers.length === 0
                 ? '<span class="empty">Nenhum vizinho conectado</span>'
                 : peers.map(function(p) {
                     var num = p.replace('ALUNO-', '');
                     var figId = 'FIG-' + num;
-                    var isOutbound = outbound.indexOf(p) !== -1;
-
-                    // Peers que este vizinho conhece (reportados no HELLO)
-                    var theirPeers = (peerNeighbors[p] || []);
-                    var neighborsHtml = theirPeers.length === 0
-                        ? ''
-                        : '<div style="margin-top:6px;padding:6px 8px;background:#0d1117;border-radius:6px;border:1px solid #21262d">'
-                            + '<span style="font-size:0.72em;color:#8b949e">Vizinhos de ' + escHtml(p) + ': </span>'
-                            + theirPeers.map(function(n) {
-                                var display = String(n).replace(/^ws:\/\//, '').replace(/^wss:\/\//, '');
-                                return '<span class="badge" style="font-size:0.72em">' + escHtml(display) + '</span>';
-                            }).join(' ')
-                            + '</div>';
 
                     // Figurinhas conhecidas deste peer
                     var peerStickers = (peerInvs[p] || []).slice().sort();
@@ -217,17 +208,11 @@
                                     + '</div>';
                             }).join('')
                             + '</div>';
-                    var borderColor = isOutbound ? '#3fb950' : '#58a6ff';
-                    var label = isOutbound
-                        ? '<span style="font-size:0.7em;background:#0d1117;color:#3fb950;border:1px solid #3fb950;border-radius:10px;padding:1px 7px;margin-left:6px">você conectou</span>'
-                        : '<span style="font-size:0.7em;background:#0d1117;color:#58a6ff;border:1px solid #58a6ff;border-radius:10px;padding:1px 7px;margin-left:6px">conectou em você</span>';
-                    return '<div class="card" style="margin-bottom:0;border-color:' + borderColor + '">'
+                    return '<div class="card" style="margin-bottom:0;border-color:#3fb950">'
                         + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
                         + imgTag(figId, 36)
-                        + '<strong style="color:' + borderColor + '"><span style="display:inline-block;width:7px;height:7px;background:' + borderColor + ';border-radius:50%;margin-right:4px"></span>' + escHtml(p) + '</strong>'
-                        + label
+                        + '<strong style="color:#3fb950"><span style="display:inline-block;width:7px;height:7px;background:#3fb950;border-radius:50%;margin-right:4px"></span>' + escHtml(p) + '</strong>'
                         + '</div>'
-                        + neighborsHtml
                         + stickersHtml
                         + '</div>';
                 }).join('');
@@ -322,6 +307,7 @@
                 }).join('');
         }
 
+        // Botão "Buscar": pega o texto do input e manda POST /api/search pro node iniciar o flooding
         async function doSearch() {
             var input = document.getElementById('search-input');
             var sticker_id = input.value.trim().toUpperCase();
@@ -342,6 +328,8 @@
             }
         }
 
+        // Abre o modal de troca e espera o usuário escolher o que vai oferecer
+        // Retorna uma Promise que resolve com o sticker_id escolhido, ou null se cancelou
         function showTradeModal(peer, sid) {
             return new Promise(function(resolve) {
                 var modal = document.getElementById('trade-modal');
@@ -390,6 +378,7 @@
             });
         }
 
+        // Botão "Propor Troca": abre o modal, e se confirmar manda POST /api/trade pro node enviar o TRADE_OFFER
         async function doTrade(target_peer_id, want_sticker_id) {
             var offerSid = await showTradeModal(target_peer_id, want_sticker_id);
             if (!offerSid) return;
@@ -417,6 +406,7 @@
             }
         }
 
+        // Botões "Aceitar" / "Recusar" nas propostas recebidas: manda POST /api/trade/accept ou /reject
         async function decideTrade(message_id, accept) {
             var url = accept ? '/api/trade/accept' : '/api/trade/reject';
             try {
@@ -431,6 +421,7 @@
             }
         }
 
+        // Botão "Remover" nos IPs configurados: tira o peer do peers.json via POST /api/peers/remove
         async function removePeer(host, port) {
             try {
                 await fetch('/api/peers/remove', {
@@ -444,6 +435,7 @@
             }
         }
 
+        // Botão "Conectar": pega o IP digitado e manda POST /api/connect pro node abrir WebSocket com esse peer
         async function doConnect() {
             var input = document.getElementById('connect-host');
             var raw = input.value.trim();
